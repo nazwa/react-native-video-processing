@@ -38,29 +38,45 @@ class RNVideoTrimmer: NSObject {
     }
   }
   
-  @objc func crop(_ source: String, options: NSDictionary, callback: @escaping RCTResponseSenderBlock) {
-    
-    //    let cropOffsetXInt = options.object(forKey: "cropOffsetX") as! Int
-    //    let cropOffsetYInt = options.object(forKey: "cropOffsetY") as! Int
-    //    let cropWidthInt = options.object(forKey: "cropWidth") as? Int
-    //    let cropHeightInt = options.object(forKey: "cropHeight") as? Int
-    //
-    //    if ( cropWidthInt == nil ) {
-    //      callback(["Invalid cropWidth", NSNull()])
-    //      return
-    //    }
-    //
-    //    if ( cropHeightInt == nil ) {
-    //      callback(["Invalid cropHeight", NSNull()])
-    //      return
-    //    }
-    
-    
-    //    let quality = ((options.object(forKey: "quality") as? String) != nil) ? options.object(forKey: "quality") as! String : ""
-    
+  @objc func addWatermark(_ source: String, callback: @escaping RCTResponseSenderBlock) {
     let sourceURL = getSourceURL(source: source)
     let asset = AVAsset(url: sourceURL as URL)
     
+    // Video Composition
+    let videoComposition = AVMutableVideoComposition(propertiesOf: asset)
+    let clipVideoTrack: AVAssetTrack! = asset.tracks(withMediaType: AVMediaTypeVideo)[0]
+    let videoSize = clipVideoTrack.naturalSize
+    
+    //adding the image layer
+    // Watermark!
+    // https://stackoverflow.com/questions/7205820/iphone-watermark-on-recorded-video?noredirect=1&lq=1
+    //    let imglogo = UIImage(named: "splashIcon.png")
+    let imglogo = UIImage(named: "watermark.png")
+    let watermarkLayer = CALayer()
+    watermarkLayer.contents = imglogo?.cgImage
+    watermarkLayer.frame = CGRect(x: videoSize.width - 150 - 25, y: 25 ,width: 150, height: 22)
+    watermarkLayer.opacity = 1
+    
+    let parentlayer = CALayer()
+    let videoLayer = CALayer()
+    
+    parentlayer.frame = CGRect(x: 0, y: 0, width: videoSize.height, height: videoSize.height)
+    videoLayer.frame = CGRect(x: 0, y: 0, width: videoSize.height, height: videoSize.height)
+    
+    parentlayer.addSublayer(videoLayer)
+    parentlayer.addSublayer(watermarkLayer)
+    
+    videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayers: [videoLayer], in: parentlayer)
+    
+    let instruction : AVMutableVideoCompositionInstruction = AVMutableVideoCompositionInstruction()
+    instruction.timeRange = CMTimeRange(start: kCMTimeZero, end: asset.duration)
+    
+    let transformer = AVMutableVideoCompositionLayerInstruction(assetTrack: clipVideoTrack)
+    
+    instruction.layerInstructions = [transformer]
+    videoComposition.instructions = [instruction]
+    
+    // Output files
     let manager = FileManager.default
     guard let documentDirectory = try? manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
       else {
@@ -78,45 +94,71 @@ class RNVideoTrimmer: NSObject {
       print(error)
     }
     
-    let useQuality = AVAssetExportPreset1280x720 //getQualityForAsset(quality: quality, asset: asset)
-    
-    //    print("RNVideoTrimmer passed quality: \(quality). useQuality: \(useQuality)")
-    
     guard
-      let exportSession = AVAssetExportSession(asset: asset, presetName: useQuality)
+      let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720)
       else {
         callback(["Error creating AVAssetExportSession", NSNull()])
         return
     }
     
-    //
-    let startTime = CMTime(seconds: Double(0), preferredTimescale: 1000)
-    let endTime = CMTime(seconds: Double(0.3), preferredTimescale: 1000)
-    let timeRange = CMTimeRange(start: startTime, end: endTime)
-    
-    exportSession.timeRange = timeRange
+    exportSession.timeRange = CMTimeRange(start: kCMTimeZero, end: asset.duration)
     exportSession.outputURL = outputURL
     exportSession.outputFileType = AVFileTypeMPEG4
     exportSession.shouldOptimizeForNetworkUse = true
+    exportSession.videoComposition = videoComposition
     
+    exportSession.exportAsynchronously {
+      
+      switch exportSession.status {
+      case .completed:
+        print("SUCCESS");
+        callback( [NSNull(), outputURL.absoluteString] )
+        
+      case .failed:
+        print("Failed");
+        callback( ["Failed: \(exportSession.error)", NSNull()] )
+        
+      case .cancelled:
+        print("Cancelled");
+        callback( ["Cancelled: \(exportSession.error)", NSNull()] )
+        
+      default: break
+      }
+    }
+  }
+  
+  @objc func crop(_ source: String, options: NSDictionary, callback: @escaping RCTResponseSenderBlock) {
+    var cropAspect:Float? = 760/1280
+    var sTime:Float? = 0
+    var eTime:Float? = 0.3
     
+    if let _aspect = options.object(forKey: "cropAspect") as? NSNumber {
+      cropAspect = _aspect.floatValue
+    }
+    if let num = options.object(forKey: "startTime") as? NSNumber {
+      sTime = num.floatValue
+    }
+    if let num = options.object(forKey: "endTime") as? NSNumber {
+      eTime = num.floatValue
+    }
+    
+    let sourceURL = getSourceURL(source: source)
+    let asset = AVAsset(url: sourceURL as URL)
+    
+    // Time range
+    let startTime = CMTime(seconds: Double(sTime!), preferredTimescale: 1000)
+    let endTime = CMTime(seconds: Double(eTime!), preferredTimescale: 1000)
+    let timeRange = CMTimeRange(start: startTime, end: endTime)
+    
+    // Video Composition
     let videoComposition = AVMutableVideoComposition(propertiesOf: asset)
     let clipVideoTrack: AVAssetTrack! = asset.tracks(withMediaType: AVMediaTypeVideo)[0]
     let videoOrientation = self.getVideoOrientationFromAsset(asset: asset)
-    
-    //    let originalSize : CGSize = clipVideoTrack.naturalSize;
-    
-    //    var cropOffsetX : CGFloat = CGFloat(cropOffsetXInt);
-    //    var cropOffsetY : CGFloat = CGFloat(cropOffsetYInt);
-    //    var cropWidth : CGFloat = CGFloat(cropWidthInt!);
-    //    var cropHeight : CGFloat = CGFloat(cropHeightInt!);
     
     var cropOffsetX : CGFloat = 0;
     var cropOffsetY : CGFloat = 0;
     var cropWidth : CGFloat = 0;
     var cropHeight : CGFloat = 0;
-    
-    let aspect : CGFloat = 720 / 1280
     
     let videoWidth : CGFloat
     let videoHeight : CGFloat
@@ -130,48 +172,20 @@ class RNVideoTrimmer: NSObject {
     }
     
     if (videoWidth > videoHeight) {
-      cropWidth = videoHeight * aspect
+      cropWidth = videoHeight * CGFloat(cropAspect!)
       cropHeight = videoHeight
       cropOffsetX = (videoWidth - cropWidth) / 2
       cropOffsetY = 0
     } else {
       cropWidth = videoWidth
-      cropHeight = videoWidth / aspect
+      cropHeight = videoWidth / CGFloat(cropAspect!)
       cropOffsetX = 0
       cropOffsetY = (videoHeight - cropHeight) / 2
     }
     
-    
     videoComposition.frameDuration = CMTimeMake(1, 30)
     videoComposition.renderSize = CGSize(width: cropWidth, height: cropHeight)
     videoComposition.renderScale = 1.0
-    
-    print("Dimensions: \(cropWidth) \(cropHeight) \(cropOffsetX) \(cropOffsetY)")
-    
-    
-    //adding the image layer
-    // Watermark!
-    // https://stackoverflow.com/questions/7205820/iphone-watermark-on-recorded-video?noredirect=1&lq=1
-    //    let imglogo = UIImage(named: "splashIcon.png")
-    //    let watermarkLayer = CALayer()
-    //    watermarkLayer.contents = imglogo?.cgImage
-    //    watermarkLayer.frame = CGRect(x: 5, y: 0 ,width: 100, height: 100)
-    //    watermarkLayer.opacity = 0.85
-    //
-    //    let parentlayer = CALayer()
-    //    let videoLayer = CALayer()
-    //
-    //    parentlayer.frame = CGRect(x: 0, y: 0, width: cropWidth, height: cropHeight)
-    //    videoLayer.frame = CGRect(x: 0, y: 0, width: cropWidth, height: cropHeight)
-    //    parentlayer.addSublayer(videoLayer)
-    //    parentlayer.addSublayer(watermarkLayer)
-    //
-    //    videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayers: [videoLayer], in: parentlayer)
-    //
-    
-    
-    let instruction : AVMutableVideoCompositionInstruction = AVMutableVideoCompositionInstruction()
-    instruction.timeRange = exportSession.timeRange // CMTimeRange(start: kCMTimeZero, end: asset.duration)
     
     var t1 = CGAffineTransform.identity
     var t2 = CGAffineTransform.identity
@@ -182,11 +196,11 @@ class RNVideoTrimmer: NSObject {
     switch videoOrientation {
     case UIImageOrientation.up:
       t1 = CGAffineTransform(translationX: clipVideoTrack.naturalSize.height - cropOffsetX, y: 0 - cropOffsetY );
-      t2 = t1.rotated(by: CGFloat(M_PI_2) );
+      t2 = t1.rotated(by: CGFloat(Double.pi / 2) );
       break;
     case UIImageOrientation.left:
       t1 = CGAffineTransform(translationX: clipVideoTrack.naturalSize.width - cropOffsetX, y: clipVideoTrack.naturalSize.height - cropOffsetY );
-      t2 = t1.rotated(by: CGFloat(M_PI)  );
+      t2 = t1.rotated(by: CGFloat(Double.pi)  );
       break;
     case UIImageOrientation.right:
       t1 = CGAffineTransform(translationX: 0 - cropOffsetX, y: 0 - cropOffsetY );
@@ -194,7 +208,7 @@ class RNVideoTrimmer: NSObject {
       break;
     case UIImageOrientation.down:
       t1 = CGAffineTransform(translationX: 0 - cropOffsetX, y: clipVideoTrack.naturalSize.width - cropOffsetY ); // not fixed width is the real height in upside down
-      t2 = t1.rotated(by: -(CGFloat)(M_PI_2) );
+      t2 = t1.rotated(by: -(CGFloat)(Double.pi / 2) );
       break;
     default:
       NSLog("no supported orientation has been found in this video");
@@ -204,12 +218,37 @@ class RNVideoTrimmer: NSObject {
     let finalTransform: CGAffineTransform = t2
     transformer.setTransform(finalTransform, at: kCMTimeZero)
     
-    instruction.layerInstructions = [transformer]
-    videoComposition.instructions = [instruction]
+    // Output files
+    let manager = FileManager.default
+    guard let documentDirectory = try? manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      else {
+        callback(["Error creating FileManager", NSNull()])
+        return
+    }
     
+    var outputURL = documentDirectory.appendingPathComponent("output")
+    do {
+      try manager.createDirectory(at: outputURL, withIntermediateDirectories: true, attributes: nil)
+      let name = randomString()
+      outputURL = outputURL.appendingPathComponent("\(name).mp4")
+    } catch {
+      callback([error.localizedDescription, NSNull()])
+      print(error)
+    }
+    
+    guard
+      let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720)
+      else {
+        callback(["Error creating AVAssetExportSession", NSNull()])
+        return
+    }
+    
+    exportSession.timeRange = timeRange
+    exportSession.outputURL = outputURL
+    exportSession.outputFileType = AVFileTypeMPEG4
+    exportSession.shouldOptimizeForNetworkUse = true
     exportSession.videoComposition = videoComposition
     
-    print("TRANSFORMING")
     exportSession.exportAsynchronously {
       
       switch exportSession.status {
