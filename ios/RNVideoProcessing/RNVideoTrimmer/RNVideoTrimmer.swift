@@ -59,6 +59,7 @@ class RNVideoTrimmer: NSObject {
     let parentlayer = CALayer()
     let videoLayer = CALayer()
 
+
     parentlayer.frame = CGRect(x: 0, y: 0, width: videoSize.width, height: videoSize.height)
     videoLayer.frame = CGRect(x: 0, y: 0, width: videoSize.width, height: videoSize.height)
 
