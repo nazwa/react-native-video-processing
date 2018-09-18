@@ -53,7 +53,7 @@ class RNVideoTrimmer: NSObject {
     let imglogo = UIImage(named: "watermark-v2.png")
     let watermarkLayer = CALayer()
     watermarkLayer.contents = imglogo?.cgImage
-    watermarkLayer.frame = CGRect(x: videoSize.width - 56 - 25, y: 25 ,width: 56, height: 400)
+    watermarkLayer.frame = CGRect(x: videoSize.width - 45 - 25, y: 25 , width: 45, height: 320)
     watermarkLayer.opacity = 1
 
     let parentlayer = CALayer()
